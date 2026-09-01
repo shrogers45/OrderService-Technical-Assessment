@@ -252,3 +252,61 @@ C:\Users\roger\Desktop\TechnicalAssessment\OrderService>
 
 
 
+## Part 3 – GitHub Actions CI/CD Pipeline
+
+### Initial GitHub Actions Setup
+
+Created a GitHub Actions workflow at:
+
+`.github/workflows/ci.yml`
+
+The workflow is configured to run on:
+
+- Pushes to `main`
+- Pull requests targeting `main`
+- Manual execution using `workflow_dispatch`
+
+The first pipeline job implements a formatting quality gate using
+`dotnet format --verify-no-changes --no-restore`.
+
+An `.editorconfig` file was also added to establish consistent formatting
+rules between local development and the CI environment.
+
+### Initial CI Formatting Failure
+
+The first GitHub Actions execution failed during the `Format Check` job.
+
+GitHub Actions reported:
+
+```text
+Program.cs(14,11): error FINALNEWLINE:
+Fix final newline. Insert '\n'.
+
+Process completed with exit code 2.
+
+
+
+
+There is also another failure worth documenting: the **first Git push of the workflow was rejected** because the cached GitHub Personal Access Token didn't have workflow permission.
+
+I recommend adding this immediately after the section above:
+
+```markdown
+### GitHub Workflow Authentication Issue
+
+The initial attempt to push `.github/workflows/ci.yml` was rejected by GitHub:
+
+```text
+refusing to allow a Personal Access Token to create or update workflow
+`.github/workflows/ci.yml` without `workflow` scope
+
+
+
+That's exactly the kind of troubleshooting trail the evaluator is asking for when they say **"silence is not good."**
+
+Now fix the newline in `Program.cs`, save it, and run:
+
+```cmd
+dotnet format --verify-no-changes --no-restore
+echo %ERRORLEVEL%
+git status

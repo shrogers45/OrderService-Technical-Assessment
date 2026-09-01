@@ -223,9 +223,10 @@ jobs:
       - name: Build application
         run: dotnet build --configuration Release --no-restore
 
-      # Execute the project's test step.
-      - name: Run tests
-        run: dotnet test --configuration Release --no-build
+      # Execute the real xUnit integration tests against the ASP.NET Core application.
+      # The test project validates /health and the default /version behavior.
+      - name: Run integration tests
+        run: dotnet test tests/OrderService.Tests/OrderService.Tests.csproj --configuration Release --no-restore
 
 
   # ----------------------------------------------------------

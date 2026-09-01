@@ -12,3 +12,7 @@ app.MapGet("/version", () =>
 });
 
 app.Run();
+
+public partial class Program
+{
+}

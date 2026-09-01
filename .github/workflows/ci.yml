@@ -26,6 +26,11 @@
 #   Trivy Image Scan  = GATE
 #   GHCR Push         = main branch only
 #   Deploy            = main branch only
+#
+# Performance optimization:
+#   NuGet packages are cached using actions/cache@v4.
+#   The cache key is based on the operating system and the
+#   project file hash so unchanged dependencies can be reused.
 # ============================================================
 
 name: OrderService CI/CD
@@ -55,8 +60,7 @@ env:
 # 3. A user manually starts the workflow using workflow_dispatch.
 #
 # workflow_dispatch will be enhanced to support the assessment's
-# redeploy-only requirement after the normal deployment path
-# has been validated.
+# redeploy-only requirement after caching has been validated.
 # ============================================================
 
 "on":
@@ -120,6 +124,19 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
+      # Cache downloaded NuGet packages.
+      #
+      # The primary key changes when a .csproj file changes.
+      # restore-keys allows GitHub Actions to reuse the closest
+      # compatible NuGet cache when an exact match is unavailable.
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
       # Restore the project's NuGet dependencies.
       - name: Restore dependencies
         run: dotnet restore
@@ -158,6 +175,16 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
+
+      # Restore the NuGet package cache created by earlier
+      # workflow runs when the project dependencies are unchanged.
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
 
       # Restore NuGet packages before compiling the application.
       - name: Restore dependencies
@@ -208,6 +235,16 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
+
+      # Reuse cached NuGet packages where possible to reduce the
+      # amount of package downloading required by this job.
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
 
       # Restore dependencies so the complete dependency graph is available.
       - name: Restore dependencies

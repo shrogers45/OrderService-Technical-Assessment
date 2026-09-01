@@ -1,4 +1,37 @@
+# ============================================================
+# OrderService CI/CD Pipeline
+# ============================================================
+# This workflow validates the application through a series of
+# dependent CI/CD stages.
+#
+# Current pipeline:
+#   Format Check
+#        |
+#        v
+#   Build and Test
+#        |
+#        v
+#   Dependency Scan
+#
+# Additional stages will be added for:
+#   Docker Build -> Image Security Scan -> GHCR Push -> Deploy
+# ============================================================
+
 name: OrderService CI/CD
+
+
+# ============================================================
+# Workflow Triggers
+# ============================================================
+# The pipeline runs when:
+#
+# 1. Code is pushed to the main branch.
+# 2. A pull request targets the main branch.
+# 3. A user manually starts the workflow using workflow_dispatch.
+#
+# workflow_dispatch will also support the manual redeployment
+# requirement later in the implementation.
+# ============================================================
 
 "on":
   push:
@@ -9,29 +42,78 @@ name: OrderService CI/CD
 
   workflow_dispatch:
 
+
+# ============================================================
+# Workflow Permissions
+# ============================================================
+# contents: read
+#   Allows the workflow to read/checkout repository contents.
+#
+# packages: write
+#   Will allow the pipeline to publish the Docker image to
+#   GitHub Container Registry (GHCR) from the main branch.
+# ============================================================
+
 permissions:
   contents: read
   packages: write
 
+
+# ============================================================
+# CI/CD Jobs
+# ============================================================
+
 jobs:
+
+  # ----------------------------------------------------------
+  # Job 1: Format Check
+  # ----------------------------------------------------------
+  # Purpose:
+  # Enforce consistent C# formatting based on .editorconfig.
+  #
+  # --verify-no-changes causes the job to fail rather than
+  # automatically modifying improperly formatted source files.
+  #
+  # This acts as the first quality gate. If it fails,
+  # downstream jobs will not execute.
+  # ----------------------------------------------------------
+
   format:
     name: Format Check
     runs-on: ubuntu-latest
 
     steps:
+
+      # Download the repository source code onto the runner.
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Install the .NET 8 SDK required to validate the project.
       - name: Setup .NET 8
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
 
+      # Restore the project's NuGet dependencies.
       - name: Restore dependencies
         run: dotnet restore
 
+      # Verify formatting against the repository's formatting rules.
+      # The pipeline fails if source files require formatting changes.
       - name: Check code formatting
         run: dotnet format --verify-no-changes --no-restore
+
+
+  # ----------------------------------------------------------
+  # Job 2: Build and Test
+  # ----------------------------------------------------------
+  # Purpose:
+  # Verify that the application can successfully compile in
+  # Release configuration and execute the project's test step.
+  #
+  # "needs: format" establishes an explicit dependency.
+  # Therefore this job will not execute if Format Check fails.
+  # ----------------------------------------------------------
 
   build:
     name: Build and Test
@@ -39,19 +121,72 @@ jobs:
     needs: format
 
     steps:
+
+      # Each GitHub-hosted job starts on a fresh runner,
+      # so the repository must be checked out again.
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Install the required .NET 8 SDK.
       - name: Setup .NET 8
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
 
+      # Restore NuGet packages before compiling the application.
       - name: Restore dependencies
         run: dotnet restore
 
+      # Compile the application using Release configuration.
+      # --no-restore avoids performing a second package restore.
       - name: Build application
         run: dotnet build --configuration Release --no-restore
 
+      # Execute the project's test step against the Release build.
+      # --no-build prevents rebuilding code that was already compiled.
       - name: Run tests
         run: dotnet test --configuration Release --no-build
+
+
+  # ----------------------------------------------------------
+  # Job 3: Dependency Scan
+  # ----------------------------------------------------------
+  # Purpose:
+  # Inspect direct and transitive NuGet dependencies for known
+  # security vulnerabilities.
+  #
+  # This provides visibility into vulnerable application
+  # dependencies before a container image is created.
+  #
+  # "needs: build" ensures dependency analysis only occurs
+  # after the application successfully builds and tests.
+  #
+  # The dedicated Trivy container image scan added later will
+  # serve as the blocking HIGH/CRITICAL deployment security gate.
+  # ----------------------------------------------------------
+
+  dependency-scan:
+    name: Dependency Scan
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+
+      # Checkout the source code on the dependency scan runner.
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Install .NET 8 so NuGet dependency information can be evaluated.
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      # Restore dependencies so the complete dependency graph is available.
+      - name: Restore dependencies
+        run: dotnet restore
+
+      # Report known vulnerabilities in both direct and
+      # transitive NuGet package dependencies.
+      - name: Scan NuGet dependencies for vulnerabilities
+        run: dotnet list package --vulnerable --include-transitive

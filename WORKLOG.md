@@ -321,3 +321,13 @@ endings, the local formatting check passed:
 dotnet format --verify-no-changes --no-restore
 echo %ERRORLEVEL%
 
+
+### Build and Test Stage Added
+
+A second GitHub Actions job was added for application build and test validation.
+
+The job uses:
+
+```yaml
+needs: format
+

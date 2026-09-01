@@ -1,8 +1,8 @@
 # ============================================================
 # OrderService CI/CD Pipeline
 # ============================================================
-# This workflow validates the application through a series of
-# dependent CI/CD stages.
+# This workflow validates, secures, publishes, and deploys the
+# OrderService application through a series of dependent stages.
 #
 # Current pipeline:
 #   Format Check
@@ -14,13 +14,18 @@
 #   Dependency Scan
 #        |
 #        v
-#   Docker Build and Trivy Scan
+#   Docker Build, Trivy Scan, and GHCR Push
 #        |
 #        v
-#   GHCR Push (main branch only)
+#   Deploy (main branch only)
 #
-# Additional stage will be added for:
-#   Deploy
+# Gating vs. reporting:
+#   Format Check      = GATE
+#   Build and Test    = GATE
+#   Dependency Scan   = REPORT
+#   Trivy Image Scan  = GATE
+#   GHCR Push         = main branch only
+#   Deploy            = main branch only
 # ============================================================
 
 name: OrderService CI/CD
@@ -30,10 +35,10 @@ name: OrderService CI/CD
 # Global Environment Variables
 # ============================================================
 # IMAGE_NAME defines the GitHub Container Registry location
-# used for container image publishing.
+# used for container image publishing and deployment.
 #
-# The Git commit SHA will be used as the image tag so each
-# published image can be traced back to the source revision.
+# The Git commit SHA is used as the image tag so each published
+# and deployed image can be traced back to its source revision.
 # ============================================================
 
 env:
@@ -49,8 +54,9 @@ env:
 # 2. A pull request targets the main branch.
 # 3. A user manually starts the workflow using workflow_dispatch.
 #
-# workflow_dispatch will also support the manual redeployment
-# requirement later in the implementation.
+# workflow_dispatch will be enhanced to support the assessment's
+# redeploy-only requirement after the normal deployment path
+# has been validated.
 # ============================================================
 
 "on":
@@ -71,7 +77,7 @@ env:
 #
 # packages: write
 #   Allows the workflow to authenticate to GitHub Container
-#   Registry and publish container images.
+#   Registry and publish/pull container images.
 # ============================================================
 
 permissions:
@@ -308,3 +314,99 @@ jobs:
       - name: Push Docker image to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+
+  # ----------------------------------------------------------
+  # Job 5: Deploy
+  # ----------------------------------------------------------
+  # Purpose:
+  # Pull and run the exact SHA-tagged image that was published
+  # to GHCR by the previous job.
+  #
+  # This assessment deployment runs on the GitHub-hosted Actions
+  # runner. The runner is temporary, so this demonstrates and
+  # validates the deployment procedure rather than providing a
+  # persistent production hosting environment.
+  #
+  # Deployment performs the following:
+  #   - Authenticate to GHCR.
+  #   - Pull the published SHA-tagged image.
+  #   - Stop/remove a same-name container if one exists.
+  #   - Run the new container in detached mode.
+  #   - Map host port 8080 to container port 8080.
+  #   - Set APP_VERSION to the deployed image tag.
+  #   - Verify /health.
+  #   - Verify /version reports the deployed image tag.
+  #
+  # "needs: container-security" ensures deployment cannot occur
+  # unless the container security/publishing job succeeds.
+  #
+  # The job-level condition restricts automatic deployment to
+  # direct pushes to the main branch.
+  # ----------------------------------------------------------
+
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    needs: container-security
+
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+
+      # Authenticate to GHCR so the deployment runner can pull
+      # the image published by the previous job.
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pull the exact SHA-tagged image that passed the Trivy
+      # security gate and was published to GHCR.
+      - name: Pull Docker image
+        run: docker pull ${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      # Stop and remove a same-name container if one exists.
+      #
+      # "|| true" prevents the deployment from failing when this
+      # is the first deployment and no previous container exists.
+      - name: Remove existing container
+        run: docker rm -f orderservice || true
+
+      # Start the newly published container in detached mode.
+      #
+      # APP_VERSION is set to the image tag (Git commit SHA).
+      # This provides runtime verification of the deployed version.
+      - name: Start container
+        run: |
+          docker run -d \
+            --name orderservice \
+            -p 8080:8080 \
+            -e APP_VERSION=${{ github.sha }} \
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      # Allow the application to initialize and verify that the
+      # health endpoint responds successfully.
+      - name: Verify health endpoint
+        run: |
+          sleep 10
+          curl --fail --silent --show-error http://localhost:8080/health
+
+      # Call /version and verify that the application reports the
+      # exact Git SHA used as the deployed container image tag.
+      #
+      # grep returns a non-zero exit code if the expected SHA is
+      # not present, causing the deployment validation to fail.
+      - name: Verify deployed version
+        run: |
+          echo "Expected deployed version: ${{ github.sha }}"
+          VERSION_RESPONSE=$(curl --fail --silent --show-error http://localhost:8080/version)
+          echo "Application response: $VERSION_RESPONSE"
+          echo "$VERSION_RESPONSE" | grep "${{ github.sha }}"
+
+      # Display the running container for deployment evidence
+      # in the GitHub Actions log.
+      - name: Show deployed container
+        run: docker ps --filter "name=orderservice"

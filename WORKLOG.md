@@ -351,3 +351,19 @@ The updated GitHub Actions pipeline completed successfully with all three stages
 Format Check       PASSED
 Build and Test     PASSED
 Dependency Scan    PASSED
+
+
+### Docker Build and Trivy Security Gate Validation
+
+The Docker build and Trivy image security scan were added to the GitHub Actions pipeline.
+
+The container image is tagged using the Git commit SHA:
+
+```text
+orderservice:${{ github.sha }}
+
+
+URGENT NOTE:
+This confirms that the production image can be built successfully and that the current image passes the configured HIGH/CRITICAL Trivy security gate.
+
+Because the Docker/Trivy job depends on the dependency scan, and future publishing/deployment jobs will depend on the Docker/Trivy job, a failed security scan will stop the pipeline before release.

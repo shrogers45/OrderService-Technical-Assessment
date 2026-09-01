@@ -409,3 +409,79 @@ After adding the cache steps, the complete CI/CD workflow was executed
 successfully. Format Check, Build and Test, Dependency Scan, container
 security scanning, GHCR publishing, and deployment all completed
 successfully.
+
+
+
+### Manual Redeploy Validation
+
+Implemented the `workflow_dispatch` deployment path to allow an existing
+container image in GitHub Container Registry (GHCR) to be redeployed without
+performing another build or publishing a new image.
+
+#### Identifying the Image to Redeploy
+
+Images published by the normal CI/CD pipeline are tagged with the Git commit
+SHA:
+
+`ghcr.io/shrogers45/orderservice:<git-sha>`
+
+The Git SHA therefore provides traceability between the source code, GitHub
+Actions workflow run, container image, and deployed application.
+
+To obtain the image tag for the most recently committed version locally, I used:
+
+`git rev-parse HEAD`
+
+The resulting SHA corresponds to the image tag created by the successful
+main-branch pipeline.
+
+The image tag can also be identified from the successful GitHub Actions
+workflow run or from the container versions published in GitHub Container
+Registry.
+
+For the manual redeployment test, I opened:
+
+`GitHub Repository -> Actions -> OrderService CI/CD -> Run workflow`
+
+I selected the `main` branch and entered the existing Git SHA into the
+`Existing GHCR image tag (Git SHA) to redeploy` field.
+
+This identifies the previously built and scanned image that should be pulled
+from GHCR.
+
+#### Manual Redeploy Execution
+
+During a manual `workflow_dispatch`, the following CI jobs are intentionally
+skipped:
+
+- Format Check
+- Build and Test
+- Dependency Scan
+- Docker Build, Trivy Scan, and GHCR Push
+
+Only the Deploy job executes.
+
+The Deploy job:
+
+1. Reads the supplied GHCR image tag.
+2. Authenticates to GitHub Container Registry.
+3. Pulls `ghcr.io/shrogers45/orderservice:<image-tag>`.
+4. Removes any existing same-name container.
+5. Starts the selected container image.
+6. Sets `APP_VERSION` to the deployed image tag.
+7. Calls `/health` to verify application health.
+8. Calls `/version` to confirm that the running application reports the
+   expected image tag.
+
+The manual redeployment completed successfully.
+
+The GitHub Actions results confirmed that Format Check, Build and Test,
+Dependency Scan, and Docker Build/Trivy Scan/GHCR Push were skipped while
+the Deploy job completed successfully.
+
+This demonstrates that a previously built, security-scanned, and published
+container image can be redeployed without rebuilding or republishing the
+application.
+
+The normal push-to-main pipeline was also retested after implementing the
+manual deployment path, and all five jobs completed successfully.

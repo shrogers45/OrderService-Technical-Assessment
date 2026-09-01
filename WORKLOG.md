@@ -771,3 +771,105 @@ runner, so `--restart unless-stopped` would provide little practical benefit
 after the job terminates. On a persistent Docker deployment host, however,
 adding a restart policy and retaining the previous known-good image for rollback
 would be appropriate next improvements.
+
+
+## Part 5 — Written Questions
+
+### 1. Could Format Check, Test, and Security Scan Run in Parallel?
+
+Yes. Some of these stages could run in parallel because formatting, testing, and
+security analysis perform largely independent validation activities. Running
+them concurrently would reduce the total CI execution time because GitHub
+Actions could perform multiple checks at the same time instead of waiting for
+each previous job to finish.
+
+For this assessment, I intentionally used a sequential pipeline with explicit
+`needs:` dependencies:
+
+`Format Check -> Build and Test -> Dependency Scan -> Container Security`
+
+The advantage is fail-fast behavior and a clear progression through the
+pipeline. For example, if formatting or compilation fails, there is little value
+in spending additional runner time building and scanning a container image that
+will never be published.
+
+The trade-off is pipeline duration. In a larger production environment, I would
+consider running independent checks such as formatting and dependency analysis
+in parallel, then use a later build/publish job that depends on all required
+quality and security gates. This would reduce execution time while still
+preventing an image from being published when a required check fails.
+
+
+### 2. Where Do Secrets Live, and What Is the Blast Radius if One Leaks?
+
+The pipeline does not store registry credentials directly in the repository or
+workflow YAML. Authentication to GitHub Container Registry uses the
+GitHub-provided `${{ secrets.GITHUB_TOKEN }}`, which is created for the workflow
+run and supplied to `docker/login-action`.
+
+The workflow currently grants:
+
+`contents: read`
+
+and:
+
+`packages: write`
+
+This limits the token primarily to reading repository content and interacting
+with GitHub Packages/GHCR for the repository.
+
+If a credential were accidentally written to a log and exposed, the blast
+radius would depend on the permissions assigned to that credential. A leaked
+token with package write access could potentially be used to manipulate
+container packages within its authorized scope.
+
+To reduce this risk, I would continue using short-lived GitHub Actions tokens,
+avoid long-lived credentials or Personal Access Tokens where possible, never
+echo secrets to logs, and apply least-privilege permissions. A further
+improvement would be to move `packages: write` from the workflow-wide permission
+scope to only the job that actually needs to publish the container image.
+
+
+### 3. What Is the Gap Created by `--ignore-unfixed`?
+
+The Trivy security gate is configured to block HIGH and CRITICAL
+vulnerabilities that have an available fix while ignoring vulnerabilities that
+currently have no upstream fix.
+
+This creates a time-based security gap. For example, an image could successfully
+pass the pipeline today because a HIGH-severity base-image vulnerability has no
+available fix. If a fix becomes available next month but the application source
+does not change and the pipeline is never run again, the previously published
+image will not automatically be rescanned.
+
+I would close this gap by adding a scheduled GitHub Actions security scan that
+periodically rescans the published production image, for example daily or
+weekly. The scheduled scan could fail or generate an alert when a previously
+unfixed HIGH or CRITICAL vulnerability becomes fixable.
+
+I would also regularly rebuild the application against updated base images.
+This ensures operating-system and runtime security updates are incorporated
+even when application source code has not changed.
+
+
+### 4. What Is the Next Step for Three Replicas Behind a Load Balancer?
+
+A single `docker run` command is appropriate for this assessment, but it is not
+the right mechanism for managing multiple application replicas.
+
+For three replicas behind a load balancer, the smallest realistic next step
+would be to introduce a container orchestration or service-management layer
+that can define the desired replica count, perform health checks, provide
+service discovery, distribute traffic, and replace unhealthy containers.
+
+For a simple environment, Docker Compose could describe multiple service
+instances together with a reverse proxy/load balancer. For a production
+environment requiring scaling, rolling deployments, self-healing, and stronger
+availability guarantees, I would use an orchestration platform such as
+Kubernetes or an appropriate managed container service.
+
+I would explicitly not attempt to solve replica count, load balancing, service
+discovery, failover, rolling deployments, or health-based replacement through
+changes to the Dockerfile. The Dockerfile defines how one application image is
+built and how one container runs. Deployment topology and orchestration belong
+in the deployment/platform layer rather than inside the application image.

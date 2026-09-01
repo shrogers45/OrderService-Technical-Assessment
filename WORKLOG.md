@@ -1,0 +1,254 @@
+# Technical Assessment Worklog
+
+## Containerize, Scan, and Ship a .NET Service via GitHub Actions
+
+## Overview
+
+This worklog documents the implementation of the technical assessment,
+including commands executed, design decisions, test results, issues encountered,
+and lessons learned.
+
+The solution will demonstrate:
+
+- ASP.NET Core Web API development using .NET 8
+- Application health and version endpoints
+- NuGet dependency vulnerability scanning
+- Docker containerization
+- Multi-stage Docker builds
+- Non-root container execution
+- Container image vulnerability scanning with Trivy
+- CI/CD implementation using GitHub Actions
+- GitHub Container Registry (GHCR) publishing
+- Automated and manual deployment
+- Post-deployment verification
+
+---
+
+# Environment
+
+Development environment:
+
+- Operating System: Windows
+- .NET SDK: 8.0.303
+- Git: 2.55.0.windows.5
+- Docker: 27.2.0
+- IDE: Visual Studio Code
+- Application: ASP.NET Core Web API
+- Target Framework: .NET 8
+
+
+
+
+Environment validation commands:
+
+Do **not** continue until you've captured the actual result.
+
+---
+# Environment Observations
+
+WARNING: daemon is not using the default seccomp profile
+
+
+# Step 2: Deliberately add the vulnerable package
+
+The assessment specifically suggests `Newtonsoft.Json 9.0.1` as a known vulnerable package for this exercise. :contentReference[oaicite:1]{index=1}
+
+Run:
+
+```cmd
+dotnet add package Newtonsoft.Json --version 9.0.1
+
+```cmd
+dotnet --version
+git --version
+docker --version
+
+## Part 2 - Vulnerability Scanning
+
+### Baseline Dependency Scan
+
+Before intentionally adding a vulnerable dependency, I ran:
+
+```cmd
+dotnet list package --vulnerable --include-transitive
+
+
+### Deliberately Introduced Vulnerable Dependency
+
+To validate that the dependency scanning process could detect a real
+security issue, I intentionally added an older vulnerable version of
+Newtonsoft.Json.
+
+Command:
+
+```cmd
+dotnet add package Newtonsoft.Json --version 9.0.1
+
+
+
+### Issue Encountered - Docker Engine Initially Unavailable
+
+When I first attempted to build the Docker image:
+
+```cmd
+docker build -t orderservice:vulnerable .
+
+error during connect:
+open //./pipe/dockerDesktopLinuxEngine:
+The system cannot find the file specified.
+
+
+docker info
+
+Server Version: 27.2.0
+Operating System: Docker Desktop
+OSType: linux
+Architecture: x86_64
+Kernel: WSL2
+
+
+## Now retred the image build
+docker build -t orderservice:vulnerable .
+
+
+### Container Healthcheck Verification
+
+After updating the runtime image to install `curl` and changing the Docker
+HEALTHCHECK to use the `/health` endpoint, I rebuilt and restarted the container.
+
+Docker reported:
+
+```text
+orderservice:vulnerable
+Up 2 minutes (healthy)
+
+
+
+## Next: Trivy vulnerability scan
+
+Now we intentionally scan the image **before fixing Newtonsoft.Json 9.0.1**. That sequence is important because the assessment wants you to demonstrate the vulnerability first, remediate it, rebuild, and prove the scan is clean afterward. :contentReference[oaicite:1]{index=1}
+
+First check whether Trivy is already installed:
+
+```cmd
+trivy --version
+
+
+
+### Vulnerable Container Image Scan
+
+After successfully building and running the deliberately vulnerable container,
+I scanned the image using Trivy.
+
+Command:
+
+```cmd
+trivy image orderservice:vulnerable
+
+
+
+Trivy scanned both operating-system packages and application dependencies.
+
+The application dependency scan detected:
+
+app/OrderService.deps.json (dotnet-core)
+
+Total: 1
+HIGH: 1
+CRITICAL: 0
+
+Library:           Newtonsoft.Json
+Vulnerability:     CVE-2024-21907
+Severity:          HIGH
+Installed Version: 9.0.1
+Fixed Version:     13.0.1
+
+
+
+## Next — fix the application vulnerability
+
+Now we're finally ready to remove `Newtonsoft.Json 9.0.1`.
+
+From:
+
+```text
+C:\Users\roger\Desktop\TechnicalAssessment\OrderService>
+
+
+### Dependency Remediation
+
+The intentionally vulnerable Newtonsoft.Json package was upgraded from
+version 9.0.1 to version 13.0.1.
+
+Command:
+
+```cmd
+dotnet add package Newtonsoft.Json --version 13.0.1
+
+
+
+
+Now we need to prove the **container image** is also clean from that .NET vulnerability.
+
+Run these commands next:
+
+```cmd
+docker build -t orderservice:fixed .
+
+
+
+### Container Rescan After Dependency Remediation
+
+After upgrading Newtonsoft.Json from 9.0.1 to 13.0.1, I rebuilt the
+container image and rescanned it with Trivy.
+
+Commands:
+
+```cmd
+docker build -t orderservice:fixed .
+trivy image orderservice:fixed
+
+
+
+
+### Next: run the actual CI-style security gate
+
+Now run exactly this:
+
+```cmd
+trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 orderservice:fixed
+
+
+### Final Container Security Gate
+
+After upgrading Newtonsoft.Json to 13.0.1 and rebuilding the image, I ran
+the same type of vulnerability gate that will be used in CI/CD.
+
+Command:
+
+```cmd
+trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 orderservice:fixed
+
+
+### Fixed Container Runtime Verification
+
+The remediated container image was started with the application version
+provided through the APP_VERSION environment variable.
+
+Command:
+
+```cmd
+docker run -d --name orderservice-fixed -p 8080:8080 -e APP_VERSION=fixed orderservice:fixed
+
+
+At this point, **Part 2 is complete**.
+
+The next phase is **Part 3: GitHub Actions CI/CD**. We should start with just one small step: create the GitHub workflow directory.
+
+From:
+
+```text
+C:\Users\roger\Desktop\TechnicalAssessment\OrderService>
+
+
+

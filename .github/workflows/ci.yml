@@ -15,12 +15,29 @@
 #        |
 #        v
 #   Docker Build and Trivy Scan
+#        |
+#        v
+#   GHCR Push (main branch only)
 #
-# Additional stages will be added for:
-#   GHCR Push -> Deploy
+# Additional stage will be added for:
+#   Deploy
 # ============================================================
 
 name: OrderService CI/CD
+
+
+# ============================================================
+# Global Environment Variables
+# ============================================================
+# IMAGE_NAME defines the GitHub Container Registry location
+# used for container image publishing.
+#
+# The Git commit SHA will be used as the image tag so each
+# published image can be traced back to the source revision.
+# ============================================================
+
+env:
+  IMAGE_NAME: ghcr.io/shrogers45/orderservice
 
 
 # ============================================================
@@ -53,8 +70,8 @@ name: OrderService CI/CD
 #   Allows the workflow to read/checkout repository contents.
 #
 # packages: write
-#   Will allow the pipeline to publish the Docker image to
-#   GitHub Container Registry (GHCR) from the main branch.
+#   Allows the workflow to authenticate to GitHub Container
+#   Registry and publish container images.
 # ============================================================
 
 permissions:
@@ -165,8 +182,8 @@ jobs:
   # after the application successfully builds and tests.
   #
   # This stage is primarily used for dependency visibility.
-  # The Trivy image scan in the next job will act as the
-  # blocking HIGH/CRITICAL container security gate.
+  # The Trivy image scan in the next job acts as the blocking
+  # HIGH/CRITICAL container security gate.
   # ----------------------------------------------------------
 
   dependency-scan:
@@ -197,14 +214,15 @@ jobs:
 
 
   # ----------------------------------------------------------
-  # Job 4: Docker Build and Trivy Image Security Scan
+  # Job 4: Docker Build, Trivy Scan, and GHCR Push
   # ----------------------------------------------------------
   # Purpose:
-  # Build the production Docker image and scan the exact image
-  # with Trivy before it can be published or deployed.
+  # Build the production Docker image, scan the exact image with
+  # Trivy, and publish it to GitHub Container Registry only after
+  # the security gate succeeds.
   #
-  # The image is tagged with the Git commit SHA so each build
-  # can be traced back to the exact source revision that created it.
+  # The image is tagged with the Git commit SHA so each image
+  # can be traced directly to the source revision that created it.
   #
   # Trivy is configured to:
   #   - Scan container vulnerabilities.
@@ -213,14 +231,21 @@ jobs:
   #   - Return exit code 1 when qualifying vulnerabilities remain.
   #
   # Because the scan returns a non-zero exit code on failure,
-  # this job acts as a blocking security gate.
+  # publishing cannot occur unless the image passes the gate.
   #
-  # "needs: dependency-scan" ensures the image is only created
-  # after formatting, build/test, and dependency scanning succeed.
+  # GHCR login and push steps execute only for direct pushes
+  # to the main branch. Pull requests are built and scanned
+  # but cannot publish container images.
+  #
+  # The build, scan, and push occur within the same job so the
+  # exact image that passed Trivy is the image that is published.
+  #
+  # "needs: dependency-scan" ensures this stage only begins after
+  # formatting, build/test, and dependency scanning succeed.
   # ----------------------------------------------------------
 
   container-security:
-    name: Docker Build and Trivy Scan
+    name: Docker Build, Trivy Scan, and GHCR Push
     runs-on: ubuntu-latest
     needs: dependency-scan
 
@@ -231,10 +256,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Build the production container image using the repository
-      # Dockerfile. The Git commit SHA is used as the image tag.
+      # Build the production container image.
+      #
+      # The image uses the GHCR repository name and is tagged
+      # with the Git commit SHA for traceability.
       - name: Build Docker image
-        run: docker build -t orderservice:${{ github.sha }} .
+        run: docker build -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
 
       # Scan the exact Docker image produced in the previous step.
       #
@@ -243,19 +270,41 @@ jobs:
       #   vulnerabilities are detected.
       #
       # severity: "HIGH,CRITICAL"
-      #   Limits the blocking gate to higher-risk findings.
+      #   Limits the blocking security gate to HIGH and CRITICAL
+      #   vulnerability findings.
       #
       # ignore-unfixed: true
-      #   Ignores vulnerabilities that do not currently have
-      #   an upstream fix available.
+      #   Ignores vulnerabilities that currently have no
+      #   upstream fix available.
       #
       # scanners: "vuln"
       #   Limits this step to vulnerability scanning.
       - name: Scan Docker image with Trivy
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: "orderservice:${{ github.sha }}"
+          image-ref: "${{ env.IMAGE_NAME }}:${{ github.sha }}"
           scanners: "vuln"
           severity: "HIGH,CRITICAL"
           ignore-unfixed: true
           exit-code: "1"
+
+      # Authenticate to GitHub Container Registry using the
+      # automatically generated GitHub Actions GITHUB_TOKEN.
+      #
+      # Authentication occurs only for direct pushes to main.
+      # Pull request workflows do not receive publishing access.
+      - name: Login to GitHub Container Registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Publish the exact SHA-tagged image that successfully
+      # passed the Trivy security gate.
+      #
+      # This step is restricted to direct pushes to main.
+      - name: Push Docker image to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}

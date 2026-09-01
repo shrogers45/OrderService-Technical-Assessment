@@ -331,3 +331,23 @@ The job uses:
 ```yaml
 needs: format
 
+
+### Dependency Vulnerability Scan Stage
+
+A dedicated dependency scanning job was added to the GitHub Actions pipeline.
+
+The job runs:
+
+```text
+dotnet list package --vulnerable --include-transitive
+
+
+
+### CI Validation Result
+
+The updated GitHub Actions pipeline completed successfully with all three stages passing:
+
+```text
+Format Check       PASSED
+Build and Test     PASSED
+Dependency Scan    PASSED

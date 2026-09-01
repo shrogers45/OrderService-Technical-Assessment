@@ -367,3 +367,14 @@ URGENT NOTE:
 This confirms that the production image can be built successfully and that the current image passes the configured HIGH/CRITICAL Trivy security gate.
 
 Because the Docker/Trivy job depends on the dependency scan, and future publishing/deployment jobs will depend on the Docker/Trivy job, a failed security scan will stop the pipeline before release.
+
+
+### GHCR Publishing Validation
+
+The CI/CD workflow was extended to publish the scanned container image to
+GitHub Container Registry (GHCR).
+
+The image is tagged using the Git commit SHA:
+
+```text
+ghcr.io/shrogers45/orderservice:${{ github.sha }}

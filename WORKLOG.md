@@ -485,3 +485,289 @@ application.
 
 The normal push-to-main pipeline was also retested after implementing the
 manual deployment path, and all five jobs completed successfully.
+
+
+### Deployment Risk and Smallest Mitigation
+
+The assessment deployment uses `docker run -d` on the GitHub Actions runner
+without a Docker restart policy or automatic health-based rollback.
+
+The primary risk is that if the newly deployed container fails after startup,
+Docker will not automatically restart it. In addition, the existing container
+is removed before the new container is fully validated. If the new version
+fails its health check, there is no automatic rollback to the previously known
+good image, which could result in service downtime.
+
+The smallest improvement for a persistent Docker host would be to add a restart
+policy such as:
+
+`--restart unless-stopped`
+
+This would allow Docker to automatically restart the application if the
+container process exits unexpectedly.
+
+A small additional deployment improvement would be to retain the previous
+known-good image tag. If the new container fails the `/health` or `/version`
+verification, the failed container could be removed and the previous image
+started again automatically.
+
+For this assessment, deployment is performed on the temporary GitHub-hosted
+Actions runner. Therefore the deployment demonstrates the exact pull, replace,
+start, and validation procedure rather than serving as a persistent production
+environment.
+
+
+
+
+## Part 4 — Deployment
+
+### Deployment Approach
+
+The deployment stage runs as a separate GitHub Actions job after the container
+security and publishing job.
+
+For a normal push to the `main` branch, the Deploy job pulls the exact
+SHA-tagged image that was built, scanned by Trivy, and published to GitHub
+Container Registry (GHCR).
+
+The assessment does not require a permanent remote deployment target, so the
+GitHub-hosted Actions runner is used as the deployment target. This demonstrates
+the complete deployment procedure while keeping the assessment self-contained.
+
+The container image format is:
+
+`ghcr.io/shrogers45/orderservice:<git-sha>`
+
+The Git commit SHA is used as the Docker image tag, providing traceability
+between the source revision, GitHub Actions run, container image, and deployed
+application.
+
+
+### Deployment Commands
+
+The deployment process authenticates to GHCR, pulls the selected image,
+removes any existing container with the same name, starts the new container,
+and validates the running application.
+
+The equivalent Docker commands are:
+
+```bash
+# Authenticate to GitHub Container Registry.
+echo "${GITHUB_TOKEN}" | docker login ghcr.io \
+  -u "${GITHUB_ACTOR}" \
+  --password-stdin
+
+# Pull the exact image that passed the CI/CD security gate.
+docker pull "ghcr.io/shrogers45/orderservice:${DEPLOY_TAG}"
+
+# Stop and remove an existing container with the same name.
+# docker rm -f performs both operations and || true makes the
+# command safe when the container does not already exist.
+docker rm -f orderservice || true
+
+# Start the selected image in detached mode.
+# APP_VERSION is set to the same value as the Docker image tag.
+docker run -d \
+  --name orderservice \
+  -p 8080:8080 \
+  -e APP_VERSION="${DEPLOY_TAG}" \
+  "ghcr.io/shrogers45/orderservice:${DEPLOY_TAG}"
+
+# Verify that the application is healthy.
+curl --fail --silent --show-error \
+  http://localhost:8080/health
+
+# Verify the version running inside the container.
+curl --fail --silent --show-error \
+  http://localhost:8080/version
+```
+
+The `/version` response is compared with `${DEPLOY_TAG}` by the GitHub Actions
+workflow. If the expected tag is not present, the command returns a non-zero
+exit code and the deployment job fails.
+
+The workflow performs the verification with:
+
+```bash
+VERSION_RESPONSE=$(curl --fail --silent --show-error \
+  http://localhost:8080/version)
+
+echo "Application response: ${VERSION_RESPONSE}"
+
+echo "${VERSION_RESPONSE}" | grep "${DEPLOY_TAG}"
+```
+
+
+### Idempotent Container Replacement
+
+An existing container must be removed before another container can be created
+using the same `orderservice` name.
+
+The assessment suggests:
+
+```bash
+docker stop orderservice 2>/dev/null
+docker rm orderservice 2>/dev/null
+```
+
+The implemented workflow uses:
+
+```bash
+docker rm -f orderservice || true
+```
+
+`docker rm -f` stops and removes the existing container in one operation.
+
+`|| true` prevents a first-time deployment from failing when an `orderservice`
+container does not already exist.
+
+This makes repeated deployments safe from Docker container-name collisions.
+
+
+### Deployment Verification
+
+After starting the container, the workflow validates both application
+availability and version identity.
+
+The health check is:
+
+```bash
+curl --fail --silent --show-error \
+  http://localhost:8080/health
+```
+
+Expected response:
+
+```json
+{"status":"healthy"}
+```
+
+The version check is:
+
+```bash
+curl --fail --silent --show-error \
+  http://localhost:8080/version
+```
+
+Expected response format:
+
+```json
+{"version":"<deployed-image-tag>"}
+```
+
+Because `APP_VERSION` is set to `${DEPLOY_TAG}` during `docker run`, the
+`/version` endpoint provides runtime evidence that the intended container image
+was deployed.
+
+
+### Manual Redeployment
+
+The workflow also supports redeploying an existing GHCR image using
+`workflow_dispatch`.
+
+Images published by the normal pipeline use the Git commit SHA as their tag.
+
+To obtain the Git SHA for the current repository revision locally:
+
+```bash
+git rev-parse HEAD
+```
+
+The SHA can also be identified from the successful GitHub Actions workflow run
+or from the container image versions published in GHCR.
+
+The manual deployment procedure is:
+
+1. Open the GitHub repository.
+2. Select **Actions**.
+3. Select **OrderService CI/CD**.
+4. Select **Run workflow**.
+5. Select the `main` branch.
+6. Enter an existing Git SHA in the
+   **Existing GHCR image tag (Git SHA) to redeploy** field.
+7. Select **Run workflow**.
+
+During `workflow_dispatch`, the CI jobs are intentionally skipped:
+
+- Format Check
+- Build and Test
+- Dependency Scan
+- Docker Build, Trivy Scan, and GHCR Push
+
+Only the Deploy job executes.
+
+The existing image is therefore pulled directly from GHCR rather than being
+rebuilt or republished.
+
+The manual redeployment test completed successfully. The Deploy job pulled the
+existing image, started the container, verified `/health`, and confirmed through
+`/version` that the requested image tag was running.
+
+
+### Deployment Risk — Restart Policy and Rollback
+
+The assessment deployment currently uses:
+
+```bash
+docker run -d \
+  --name orderservice \
+  -p 8080:8080 \
+  -e APP_VERSION="${DEPLOY_TAG}" \
+  "ghcr.io/shrogers45/orderservice:${DEPLOY_TAG}"
+```
+
+There is no Docker restart policy.
+
+If the application process terminates unexpectedly on a persistent Docker host,
+the container will remain stopped until something explicitly starts it again.
+
+A small improvement would be:
+
+```bash
+docker run -d \
+  --restart unless-stopped \
+  --name orderservice \
+  -p 8080:8080 \
+  -e APP_VERSION="${DEPLOY_TAG}" \
+  "ghcr.io/shrogers45/orderservice:${DEPLOY_TAG}"
+```
+
+This allows Docker to restart the container automatically after an unexpected
+process failure or host restart.
+
+However, a restart policy does not provide application rollback.
+
+The current deployment also removes the previous container before the new
+container has passed its health verification:
+
+```bash
+docker rm -f orderservice || true
+```
+
+If the new image starts but subsequently fails `/health`, the previous
+known-good container has already been removed. This can result in service
+downtime.
+
+The smallest practical rollback improvement would be to retain the previous
+known-good image tag before deployment. If the new container fails its health
+or version verification, the failed container could be removed and the previous
+known-good image started again.
+
+For example, the recovery procedure would conceptually perform:
+
+```bash
+docker rm -f orderservice || true
+
+docker run -d \
+  --restart unless-stopped \
+  --name orderservice \
+  -p 8080:8080 \
+  -e APP_VERSION="${PREVIOUS_TAG}" \
+  "ghcr.io/shrogers45/orderservice:${PREVIOUS_TAG}"
+```
+
+For this assessment, deployment runs on an ephemeral GitHub-hosted Actions
+runner, so `--restart unless-stopped` would provide little practical benefit
+after the job terminates. On a persistent Docker deployment host, however,
+adding a restart policy and retaining the previous known-good image for rollback
+would be appropriate next improvements.

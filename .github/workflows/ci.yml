@@ -167,8 +167,8 @@ jobs:
             ${{ runner.os }}-nuget-
 
       # Restore the project's NuGet dependencies.
-      - name: Restore application and test dependencies
-        run: dotnet restore tests/OrderService.Tests/OrderService.Tests.csproj
+      - name: Restore dependencies
+        run: dotnet restore
 
       # Verify formatting against the repository's formatting rules.
       # The pipeline fails if source files require formatting changes.
@@ -181,7 +181,7 @@ jobs:
   # ----------------------------------------------------------
   # Purpose:
   # Verify that the application successfully compiles in Release
-  # configuration and execute the project's test step.
+  # configuration and execute the project's integration tests.
   #
   # "needs: format" creates an explicit dependency.
   #
@@ -215,9 +215,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-nuget-
 
-      # Restore NuGet packages before compiling.
-      - name: Restore dependencies
-        run: dotnet restore
+      # Restore the application and integration test dependencies.
+      # Restoring the test project also restores its project reference
+      # to the main OrderService application.
+      - name: Restore application and test dependencies
+        run: dotnet restore tests/OrderService.Tests/OrderService.Tests.csproj
 
       # Compile the application using Release configuration.
       - name: Build application

@@ -167,8 +167,8 @@ jobs:
             ${{ runner.os }}-nuget-
 
       # Restore the project's NuGet dependencies.
-      - name: Restore dependencies
-        run: dotnet restore
+      - name: Restore application and test dependencies
+        run: dotnet restore tests/OrderService.Tests/OrderService.Tests.csproj
 
       # Verify formatting against the repository's formatting rules.
       # The pipeline fails if source files require formatting changes.

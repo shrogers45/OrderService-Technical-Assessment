@@ -378,3 +378,34 @@ The image is tagged using the Git commit SHA:
 
 ```text
 ghcr.io/shrogers45/orderservice:${{ github.sha }}
+
+
+
+URGENT NOTES FOR CACHE:
+I implemented NuGet package caching as a step in each .NET job rather than as a separate job. Since GitHub-hosted jobs run on separate ephemeral runners, actions/cache@v4 restores the NuGet package cache for each job. The cache is keyed using the project file hash, so changes to package references generate a new cache key.
+
+### NuGet Cache Implementation and Validation
+
+Added NuGet package caching to the Format Check, Build and Test, and
+Dependency Scan jobs using `actions/cache@v4`.
+
+The cache stores:
+
+`~/.nuget/packages`
+
+The cache key is based on the runner operating system and the hash of
+the project files:
+
+`${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}`
+
+This allows unchanged NuGet dependencies to be reused between workflow
+runs instead of downloading all packages again.
+
+Caching was implemented inside each .NET job because GitHub-hosted jobs
+run on separate ephemeral runners and do not automatically share their
+local filesystems.
+
+After adding the cache steps, the complete CI/CD workflow was executed
+successfully. Format Check, Build and Test, Dependency Scan, container
+security scanning, GHCR publishing, and deployment all completed
+successfully.

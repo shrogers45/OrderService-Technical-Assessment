@@ -310,3 +310,14 @@ Now fix the newline in `Program.cs`, save it, and run:
 dotnet format --verify-no-changes --no-restore
 echo %ERRORLEVEL%
 git status
+
+
+### Formatting Gate Remediation Verified
+
+After correcting the final newline and converting `Program.cs` to LF line
+endings, the local formatting check passed:
+
+```cmd
+dotnet format --verify-no-changes --no-restore
+echo %ERRORLEVEL%
+

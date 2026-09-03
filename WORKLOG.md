@@ -1,4 +1,4 @@
-# Technical Assessment Worklog
+# Technical Assessment Worklog for presentation
 
 ## Assessment Approach and Worklog Purpose
 

@@ -1680,11 +1680,22 @@ after the job terminates. On a persistent Docker host, restart behavior
 and rollback to a known-good image would be appropriate next
 improvements.
 
+
+## what's the actual risk of docker run with no restart policy and no health-based rollback, 
+## and what's the smallest change that reduces it?
+
+Without a restart policy, an unexpected container stop can leave the service unavailable. 
+Without health-based rollback, a new deployment can start but fail validation, and there 
+is no automatic return to the previous known-good version. The smallest improvement for 
+availability is --restart unless-stopped. For deployment safety, I would also retain the 
+previous image tag and restart that image if post-deployment health or version validation fails.
+
 ------------------------------------------------------------------------
 
-**\# Part 5 --- Written Questions**
+**# Part 5 --- Written Section / Questions**
 
-## 1. Could Format Check, Test, and Security Scan Run in Parallel?
+## 1. Format check, test, security scan — if all three could run in parallel 
+## instead of sequentially, would you? What do you gain, what do you risk??
 
 Yes. Formatting, testing, and some security analysis are largely
 independent and could run concurrently. The main benefit would be
@@ -1709,7 +1720,8 @@ and dependency analysis in parallel and then have the image
 build/publish stage depend on all required gates. This would improve
 speed while still preventing release when a required check fails.
 
-## 2. Where Do Secrets Live, and What Is the Blast Radius if One Leaks?
+## 2. Where do secrets live in your pipeline? What's the blast radius 
+## if one leaks into a log line?
 
 Registry credentials are not stored directly in the repository or
 workflow YAML. Authentication to GHCR uses the GitHub-provided
@@ -1737,7 +1749,9 @@ credentials to logs, and applying least privilege. A further improvement
 would be to scope `packages: write` only to the job that actually
 publishes the container rather than granting it workflow-wide.
 
-## 3. What Is the Gap Created by `--ignore-unfixed`?
+## 3. Your Trivy gate uses --ignore-unfixed. A base-image CVE that had no fix 
+## gets one next month. Nothing in your pipeline catches that automatically. 
+## What's the gap, how do you close it?
 
 The Trivy gate blocks HIGH and CRITICAL vulnerabilities with available
 fixes while ignoring findings that currently have no upstream fix.
@@ -1756,7 +1770,9 @@ I would also regularly rebuild the application against updated base
 images so operating-system and runtime security fixes are incorporated
 even when application source code has not changed.
 
-## 4. What Is the Next Step for Three Replicas Behind a Load Balancer?
+## 4. If this needed 3 replicas behind a load balancer instead of one docker run, 
+## what's the smallest realistic next step — and what would you explicitly 
+## not try to solve with a Dockerfile change alone??
 
 A single `docker run` command is appropriate for this assessment, but it
 is not an appropriate mechanism for managing multiple application
